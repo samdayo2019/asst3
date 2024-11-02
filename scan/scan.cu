@@ -27,6 +27,27 @@ static inline int nextPow2(int n) {
     return n;
 }
 
+__global__ void upSweepPhase(int N, const int two_d, const int two_d_plus_1, int* outputArray){
+    int index = blockIdx.x * blockDim.x + threadIdx.x; // find thread index 
+    if(index < N){
+        outputArray[index*two_d_plus_1 + two_d_plus_1 - 1] += output[index*two_d_plus_1 + two_d -1];
+    }
+}
+
+//to allow one thread to set the last element of the array to 0.
+__global__ void setLastZero(int N, int* array){
+    array[N - 1] = 0;
+}
+
+__global__ void downSweepPhase(int N, const int two_d, const int two_d_plus_1, int* outputArray){
+    int index = blockIdx.x * blockDim.x + threadIdx.x; // find thread index 
+    if(index < N){
+        int t = outputArray[index*two_d_plus_1 + two_d - 1]
+        outputArray[index*two_d_plus_1 + two_d - 1] = outputArray[index*two_d_plus_1 + two_d_plus_1 - 1];
+        outputArray[index*two_d_plus_1 + two_d_plus_1 - 1] += t;
+    }
+}
+
 // exclusive_scan --
 //
 // Implementation of an exclusive scan on global memory array `input`,
@@ -42,7 +63,7 @@ static inline int nextPow2(int n) {
 // Also, as per the comments in cudaScan(), you can implement an
 // "in-place" scan, since the timing harness makes a copy of input and
 // places it in result
-void exclusive_scan(int* input, int N, int* result)
+void exclusive_scan(int N, int* array)
 {
 
     // CS149 TODO:
@@ -54,7 +75,43 @@ void exclusive_scan(int* input, int N, int* result)
     // to CUDA kernel functions (that you must write) to implement the
     // scan.
 
+    //three main functions: upsweep phase , set to zero, downsweep phase
 
+    int N_pow_2 = nextPow2(N);
+    int two_dplus1; 
+    int num_parallel_threads; 
+    int num_blocks;
+
+    for (int two_d = 1; two_d <= N_pow_2/2; two_d*=2){
+        two_dplus1 = 2*two_d; 
+        
+        // compute how many parallel elements we actually have running
+        num_parallel_threads = N_pow_2 / two_dplus1; // since we can assume that N_pow_2 is actually a power of 2
+
+        // compute how many blocks we actually have running
+        num_blocks = num_parallel_threads / THREADS_PER_BLOCK;
+
+        upSweepPhase<<<num_blocks, THREADS_PER_BLOCK>>>(num_parallel_threads, two_d, two_dplus1, array);
+
+        cudaDeviceSynchronize();
+    }
+
+    setLastZero<<<1, 1>>>(N_pow_2, array);
+    cudaDeviceSynchronize();
+
+    for (int two_d = N_pow_2/2; two_d >= 1; two_d /=2){
+        two_dplus1 = 2*two_d; 
+        
+        // compute how many parallel elements we actually have running
+        num_parallel_threads = N_pow_2 / two_dplus1; // since we can assume that N_pow_2 is actually a power of 2
+
+        // compute how many blocks we actually have running
+        num_blocks = num_parallel_threads / THREADS_PER_BLOCK;
+
+        downSweepPhase<<<num_blocks, THREADS_PER_BLOCK>>>(num_parallel_threads, two_d, two_dplus1, array);
+
+        cudaDeviceSynchronize();
+    }
 }
 
 
@@ -140,7 +197,23 @@ double cudaScanThrust(int* inarray, int* end, int* resultarray) {
     return overallDuration; 
 }
 
+__global__ void setRepeatFlags(int* input, int* output, int N){
+    int index = blockIdx.x * blockDim.x + threadIdx.x; // find thread index 
+    if(index < N - 1){
+        output[index] = (input[index] == input[index + 1])? 1: 0; // ternary operations shorthand
+    }
+}
 
+__global__ void calcNumMatches(int N, int* scans, int* flags, int* result){
+    result = scans[N - 2] + flags[N-2];
+}
+
+__global__ void gatherIndices(int N, int* scans, int* flags, int* output){
+    int index = blockIdx.x * blockDim.x + threadIdx.x; // find thread index 
+    if (index < N - 1){
+        if(flags[index]) output[scans[index]] = index;
+    }
+}
 // find_repeats --
 //
 // Given an array of integers `device_input`, returns an array of all
@@ -161,7 +234,45 @@ int find_repeats(int* device_input, int length, int* device_output) {
     // must ensure that the results of find_repeats are correct given
     // the actual array length.
 
-    return 0; 
+    // count how many elements are equal to the next one, setting flags to each element that holds 
+    const int length_pow_2 = nextPow2(length); //
+    int* flags_array;
+    int* scan_output;
+    int* num_matches;
+
+    cudaMalloc(&flags_array, length_pow_2 * sizeof(int));
+    cudaMalloc(&scan_output, length_pow_2 * sizeof(int));
+    cudaMalloc(&num_matches, sizeof(int));
+
+    int num_blocks = length_pow_2 / THREADS_PER_BLOCK;
+
+    setRepeatFlags<<<num_blocks, THREADS_PER_BLOCK>>>(device_input, flags_array, length_pow_2);
+    
+    cudeDeviceSynchronize();
+    
+    //copy values into second intermediate array
+    cudaMemcpy(scan_output, flags_array, length_pow_2*sizeof(int) cudaMemcpyDeviceToDevice);
+    if (err != cudaSuccess) {
+        printf("Error copying data: %s\n", cudaGetErrorString(err));
+    }
+    
+    exclusive_scan(length_pow_2, scan_putput); //perform the exclusive prefix scan
+
+    calcNumMatches<<<1, 1>>>(length_pow_2, scan_output, flags_array, num_matches);
+
+    gatherIndices<<<num_blocks, THREADS_PER_BLOCK>>>(length_pow_2, scan_output, flags_array, device_output);
+
+    cudeDeviceSynchronize();
+
+    int final_length; 
+
+    cudaMemcpy(&final_length, num_matches, sizeof(int), cudaMemcpuDeviceToHost);
+
+    cudaFree(flags_array);
+    cudaFree(scan_output);
+    cudaFree(num_matches);
+
+    return final_length;    
 }
 
 
