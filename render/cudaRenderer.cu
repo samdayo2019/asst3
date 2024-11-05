@@ -740,16 +740,8 @@ void CudaRenderer::render() {
 
     // 256 threads per block is a healthy number
     dim3 blockDim(256, 1);
-    dim3 gridDim((numCircles + blockDim.x - 1) / blockDim.x); // rounds up the number of blocks
+    dim3 gridDim((numPixels + blockDim.x - 1) / blockDim.x); // we set it such that each pixel is processed by 1 thread
 
-    // Each thread is given a single circle to process, but multiple circles can overlap the same pixel 
-    // Causing race conditions without some implemented synchronization.
-
-    /*strategies for implementing the atomicity and ordering requirements: 
-        1. Tiled Rendering; thread blocks assigned tiles. Processes circles contributing to pixels in this tile.
-        2. Depth Sorting --> Not really a fix to the atomicity problem
-        3. Multi-pass rendering --> store contributions in temp memory on first pass, then actually write values on 2nd.     
-    */
-    kernelRenderCircles<<<gridDim, blockDim>>>();
-    cudaDeviceSynchronize();    
+    kernelRenderPixels<<<gridDim, blockDim>>>();
+    cudaDeviceSynchronize();
 }
