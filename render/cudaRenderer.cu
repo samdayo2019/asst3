@@ -450,10 +450,10 @@ __global__ void kernelRenderPixels() {
     float4 pixelColor = make_float4(1.f, 1.f, 1.f, 1.f); // Assuming white background
 
     for(int circleIndex = 0; circleIndex < cuConstRendererParams.numCircles; ++circleIndex){
-        int index3 = 3 * index; 
+        int posIndex3 = 3 * circleIndex; 
 
-        float3 p = *(float3*)(&cuConstRendererParams.position[index3]); // float3 holds 3 components, p.x, p.y, and p.z. Find coords for each circle
-        float  rad = cuConstRendererParams.radius[index]; // find radius of each circle
+        float3 p = *(float3*)(&cuConstRendererParams.position[posIndex3]); // float3 holds 3 components, p.x, p.y, and p.z. Find coords for each circle
+        float  rad = cuConstRendererParams.radius[circleIndex]; // find radius of each circle
 
         // Compute normalized bounding box for the circle.
 
@@ -498,8 +498,8 @@ __global__ void kernelRenderPixels() {
 
         } else {
             // simple: each circle has an assigned color
-            int index3 = 3 * circleIndex;
-            rgb = *(float3*)&(cuConstRendererParams.color[index3]);
+            int colorIndex3 = 3 * circleIndex;
+            rgb = *(float3*)&(cuConstRendererParams.color[colorIndex3]);
             alpha = .5f;
         }
 
