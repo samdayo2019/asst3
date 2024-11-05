@@ -431,6 +431,7 @@ __global__ void kernelAdvanceSnowflake() {
 __global__ void kernelRenderPixels() {
 
     int pixelIndex = blockIdx.x * blockDim.x + threadIdx.x; //each thread is reponsible for rendering a circle.
+    int offset = 4*pixelIndex; 
 
     int imageWidth = cuConstRendererParams.imageWidth; 
     int imageHeight = cuConstRendererParams.imageHeight;
@@ -447,7 +448,11 @@ __global__ void kernelRenderPixels() {
     float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
                                             invHeight * (static_cast<float>(pixelY) + 0.5f));
 
-    float4 pixelColor = make_float4(1.f, 1.f, 1.f, 1.f); // Assuming white background
+    float4 pixelColor = make_float4(0.f, 0.f, 0.f, 0.f); // Assuming white background
+    pixelColor.x = cuConstRendererParams.imageData[offset];
+    pixelColor.y = cuConstRendererParams.imageData[offset+1];
+    pixelColor.z = cuConstRendererParams.imageData[offset + 2];
+    pixelColor.w = cuConstRendererParams.imageData[offset + 3];
 
     for(int circleIndex = 0; circleIndex < cuConstRendererParams.numCircles; ++circleIndex){
         int posIndex3 = 3 * circleIndex; 
@@ -510,7 +515,6 @@ __global__ void kernelRenderPixels() {
         pixelColor.w = alpha + oneMinusAlpha * pixelColor.w;
     }
 
-    int offset = 4*pixelIndex; 
     cuConstRendererParams.imageData[offset] = pixelColor.x;
     cuConstRendererParams.imageData[offset + 1] = pixelColor.y;
     cuConstRendererParams.imageData[offset + 2] = pixelColor.z;
