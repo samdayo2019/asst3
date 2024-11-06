@@ -26,11 +26,8 @@ private:
     float* cudaDeviceColor;
     float* cudaDeviceRadius;
     float* cudaDeviceImageData;
-
-    int numTilesX; 
-    int numTilesY; 
-    int numTotalTiles; 
-    int* deviceFlagsArray;
+    short* cudaDeviceCircleFlags;
+    
 
 public:
 
