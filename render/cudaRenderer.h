@@ -27,6 +27,11 @@ private:
     float* cudaDeviceRadius;
     float* cudaDeviceImageData;
 
+    int numTilesX; 
+    int numTilesY; 
+    int numTotalTiles; 
+    int* deviceFlagsArray;
+
 public:
 
     CudaRenderer();

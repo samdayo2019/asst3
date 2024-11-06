@@ -18,6 +18,9 @@
 // Putting all the cuda kernels here
 ///////////////////////////////////////////////////////////////////////////////////////
 
+#define TILE_SIZE 64
+#define NUM_CIRCLES_PER_BATCH 1024
+
 struct GlobalConstants {
 
     SceneName sceneName;
@@ -428,7 +431,8 @@ __global__ void kernelAdvanceSnowflake() {
 //     }
 // }
 
-__global__ void kernelRenderPixels() {
+__global__ void kernelRenderPixels(int index, int numCirclesTile, int numTilesX, int numTilesY, 
+            int imageWidth, int imageHeight, int* deviceFlagsArray) {
 
     int pixelIndex = blockIdx.x * blockDim.x + threadIdx.x; //each thread is reponsible for rendering a circle.
     int offset = 4*pixelIndex; 
@@ -454,7 +458,18 @@ __global__ void kernelRenderPixels() {
     pixelColor.z = cuConstRendererParams.imageData[offset + 2];
     pixelColor.w = cuConstRendererParams.imageData[offset + 3];
 
-    for(int circleIndex = 0; circleIndex < cuConstRendererParams.numCircles; ++circleIndex){
+    int tileCoordX = pixelX / TILE_SIZE; 
+    int tileCoordY = pixelY / TILE_SIZE; 
+    int tileIndex = tileCoordY * numTileX + tileCoordX; 
+
+    int* circleFlags = &deviceCircleFlags[tileIndex * NUM_CIRCLES_PER_BATCH];
+
+    for(int circleIdx = 0; circleIdx < cuConstRendererParams.numCircles; ++circleIdx){
+        int circleFlag = circleFlags[circleIdx];
+        if(circleFlag < 0) break;
+
+        int circleIndex = index + circleFlag;
+
         int posIndex3 = 3 * circleIndex; 
 
         float3 p = *(float3*)(&cuConstRendererParams.position[posIndex3]); // float3 holds 3 components, p.x, p.y, and p.z. Find coords for each circle
@@ -521,7 +536,45 @@ __global__ void kernelRenderPixels() {
     cuConstRendererParams.imageData[offset + 3] = pixelColor.w;
 }
 
+__global__ void setTilesForCircles(int circleIndex, int numCirclesTile, int numTilesX, int numTilesY, 
+            int imageWidth, int imageHeight, int* deviceFlagsArray){
+    
+    int index = threadIdx.x; 
+    if (index >= numCirclesTile) return; 
 
+    int circleIdx = index + circleIndex; 
+
+    int index3 = 3 * circleIdx;
+
+    float3 p = *(float3*)(&cuConstRendererParams.position[index3]); // float3 holds 3 components, p.x, p.y, and p.z
+    float  rad = cuConstRendererParams.radius[circleIdx];
+
+
+    short minX = static_cast<short>(imageWidth * (p.x - rad)); 
+    short maxX = static_cast<short>(imageWidth * (p.x + rad)) + 1; // include partially covered pixels
+    short minY = static_cast<short>(imageHeight * (p.y - rad));
+    short maxY = static_cast<short>(imageHeight * (p.y + rad)) + 1; // include partially covered pixels, helps with inclusive loop bounds
+
+    // a bunch of clamps.  Is there a CUDA built-in for this?
+    short screenMinX = (minX > 0) ? ((minX < imageWidth) ? minX : imageWidth) : 0;
+    short screenMaxX = (maxX > 0) ? ((maxX < imageWidth) ? maxX : imageWidth) : 0;
+    short screenMinY = (minY > 0) ? ((minY < imageHeight) ? minY : imageHeight) : 0;
+    short screenMaxY = (maxY > 0) ? ((maxY < imageHeight) ? maxY : imageHeight) : 0;
+
+    int tileMinX = screenMinX / TILE_SIZE; 
+    int tileMinY = screenMinY / TILE_SIZE; 
+    int tileMaxX = screenMaxX / TILE_SIZE; 
+    int tileMaxY = screenMaxY / TILE_SIZE; 
+
+    for(int tileCoordY = tileMinY; tileCoordY <= tileMaxY; ++tileCoordY){
+        for(int tileCoordX = tileMinx; tileCoordX <= tileMinX; ++tileCoordX){
+            int tileIndex = tileCoordY * numTileX + tileCoordX; 
+            int flagIndex = tileIndex * NUM_CIRCLES_PER_BATCH + index; 
+            if(index < NUM_CIRCLES_PER_BATCH) deviceFlagsArray[flagIndex] = index; 
+        }
+    }
+
+}
 ////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -742,10 +795,27 @@ void CudaRenderer::render() {
     int imageHeight = image->height;
     int numPixels = imageWidth*imageHeight;
 
-    // 256 threads per block is a healthy number
+    int numTilesX = (image->width + TILE_SIZE -1) / TILE_SIZE;
+    int numTilesY = (imageHeight + TILE_SIZE - 1) / TILE_SIZE;
+    int numTotalTiles = numTilesX * numTilesY;
+
+    dim3 tileGridDim(numTilesX, numTilesY);
+     // 256 threads per block is a healthy number
     dim3 blockDim(256, 1);
     dim3 gridDim((numPixels + blockDim.x - 1) / blockDim.x); // we set it such that each pixel is processed by 1 thread
 
-    kernelRenderPixels<<<gridDim, blockDim>>>();
-    cudaDeviceSynchronize();
+    for(int circleIndex = 0; circleIndex < numCircles; circleIndex += NUM_CIRCLES_PER_BATCH){
+        int numCirclesTile = (NUM_CIRCLES_PER_BATCH > numCircles - circleIndex) ? numCircles - circleIndex : NUM_CIRCLES_PER_BATCH;
+        cudaMemset(deviceFlagsArray, -1, numTotalTiles * NUM_CIRCLES_PER_BATCH * sizeof(int));
+        setTilesForCircles<<<tileGridDim, NUM_CIRCLES_PER_BATCH>>>(circleIndex, numCirclesTile, numTilesX, numTilesY, 
+            imageWidth, imageHeight, deviceFlagsArray);
+        cudaDeviceSynchronize();
+        kernelRenderPixels<<<gridDim, blockDim>>>(circleIndex, numCirclesTile, numTilesX, numTilesY, 
+            imageWidth, imageHeight, deviceFlagsArray);
+        cudaDeviceSynchronize();
+    }
+
+   
+
+    
 }
