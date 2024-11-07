@@ -434,21 +434,6 @@ __global__ void kernelAdvanceSnowflake() {
 //     }
 // }
 
-// __device__ __inline__ bool shouldRender(int circleIndex, const float2& pixelCenterNorm, float* pixelDist) {
-//     int index3 = 3 * circleIndex;
-
-//     // Read position and radius
-//     float3 p = *(float3*)(&cuConstRendererParams.position[index3]);
-//     float rad = cuConstRendererParams.radius[circleIndex];
-//     float maxDist = rad * rad;
-
-//     float diffX = p.x - pixelCenterNorm.x;
-//     float diffY = p.y - pixelCenterNorm.y;
-//     *pixelDist = diffX * diffX + diffY * diffY;
-
-//     return (*pixelDist) <= maxDist;
-// }
-
 // Applies the changes induced by a batch of circles for a pixel.
 __global__ void kernelRenderCircles(int offset, int numTileCircles) {
     int pixelIndex = blockIdx.x * blockDim.x + threadIdx.x;
@@ -582,7 +567,6 @@ __global__ void setTileCircles(int offset, int numTileCircles) {
         cuConstRendererParams.circleFlags[flagIndex] = circleIdx;
     }
     else if (circleIdx == numTileCircles - 1) {
-        // Assign circle index or sentinel based on scanInput
         cuConstRendererParams.circleFlags[flagIndex] = scanInput[circleIdx] ? circleIdx : -1;
         
         if (scanInput[circleIdx] && scanOutput[circleIdx] < circleIdx) {
